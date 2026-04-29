@@ -18,7 +18,7 @@ A Solaris LOP HDA that walks a USD stage and writes an After Effects
 populates it with cameras, lights, nulls, solids, and footage layers —
 preserving hierarchy and per-frame animation.
 
-This is the **reverse** of [`ae-usd-exporter`](https://github.com/Gegenschuss/ae-usd-exporter)
+This is the **reverse** of [`aftereffects-to-houdini-usd-exporter`](https://github.com/Gegenschuss/aftereffects-to-houdini-usd-exporter)
 and uses the same TresSims AE↔Houdini convention applied in inverse.
 
 ## Why
@@ -140,7 +140,7 @@ Not yet visually verified end-to-end:
 
 ## Companion repos
 
-- [`ae-usd-exporter`](https://github.com/Gegenschuss/ae-usd-exporter) —
+- [`aftereffects-to-houdini-usd-exporter`](https://github.com/Gegenschuss/aftereffects-to-houdini-usd-exporter) —
   forward direction (AE → USD).  Same TresSims convention.
 
 ## Licence

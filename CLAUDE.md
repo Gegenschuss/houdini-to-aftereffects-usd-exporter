@@ -2,13 +2,13 @@
 
 Guidance for Claude (and contributors) working on this exporter.  Read
 this BEFORE editing the math or the JSX format -- the conventions here
-are the inverse of `ae-usd-exporter` and need to stay paired.
+are the inverse of `aftereffects-to-houdini-usd-exporter` and need to stay paired.
 
 ## What this is
 
 A Solaris LOP HDA that walks a USD stage and writes an After Effects
 .jsx that recreates the scene as a comp.  Reverse of
-`ae-usd-exporter`'s `GegenschussAeUsdExporter.jsx`.  Same TresSims
+`aftereffects-to-houdini-usd-exporter`'s `GegenschussAeUsdExporter.jsx`.  Same TresSims
 convention, applied in inverse.
 
 ## Repo orientation
@@ -25,7 +25,7 @@ convention, applied in inverse.
 
 ## Coordinate convention (TresSims, inverse)
 
-Forward (AE -> USD), from `ae-usd-exporter`:
+Forward (AE -> USD), from `aftereffects-to-houdini-usd-exporter`:
 
 ```
 position:  ( px / s, -py / s, -pz / s)        s = scale (default 100)
@@ -107,7 +107,7 @@ identity AE**:
 3. The resulting JSX should set the layer's position to (100, -200, -300)
    at default scale=100.
 
-For round-trip, the gold standard is: AE -> USD via `ae-usd-exporter` ->
+For round-trip, the gold standard is: AE -> USD via `aftereffects-to-houdini-usd-exporter` ->
 USD -> AE via this tool -> compare the second AE comp's transform values
 to the first.  Any drift > 1e-4 on translation or rotation (in degrees)
 is a bug.
@@ -139,7 +139,7 @@ is a bug.
    since.
 2. For the README: keep the early-release warning, the conventions
    block, and the prim-mapping table in sync with the code.  Lift the
-   tone from `ae-usd-exporter/README.md`.
+   tone from `aftereffects-to-houdini-usd-exporter/README.md`.
 3. For functional gaps: write a small synthetic USD test stage in
    Python first (see `Verifying` above), then iterate.
 4. **Never auto-commit.**  Make the edit, save, tell the user briefly
