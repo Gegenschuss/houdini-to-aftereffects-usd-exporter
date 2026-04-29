@@ -19,7 +19,7 @@ populates it with cameras, lights, nulls, solids, and footage layers —
 preserving hierarchy and per-frame animation.
 
 This is the **reverse** of [`aftereffects-to-houdini-usd-exporter`](https://github.com/Gegenschuss/aftereffects-to-houdini-usd-exporter)
-and uses the same TresSims AE↔Houdini convention applied in inverse.
+and uses the same AE↔USD coordinate conversion applied in inverse.  The bilateral conjugation `S · M · S` (with `S = diag(1, -1, -1)`) is involutive, so the same matrix function maps both directions.
 
 ## Why
 
@@ -172,7 +172,7 @@ Not yet visually verified end-to-end:
 ## Companion repos
 
 - [`aftereffects-to-houdini-usd-exporter`](https://github.com/Gegenschuss/aftereffects-to-houdini-usd-exporter) —
-  forward direction (AE → USD).  Same TresSims convention.
+  forward direction (AE → USD).  Same coordinate conversion, applied in reverse.
 
 ## Licence
 

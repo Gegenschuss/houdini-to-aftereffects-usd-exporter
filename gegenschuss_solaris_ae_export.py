@@ -6,7 +6,7 @@ that, when run in After Effects, recreates the scene as a comp with
 cameras, lights, nulls, solids, and footage layers.
 
 This is the inverse of GegenschussAeUsdExporter.jsx and uses the same
-TresSims AE<->Houdini convention, applied in reverse:
+AE<->USD coordinate conversion, applied in reverse:
 
     AE position  = ( ux, -uy, -uz) * scale       (USD units -> AE pixels)
     AE rotation  = inverse bilateral conjugation by S = diag(1, -1, -1)

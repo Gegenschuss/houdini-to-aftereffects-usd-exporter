@@ -10,7 +10,7 @@ JSX format -- the conventions here are the inverse of
 A Solaris LOP HDA that walks a USD stage and writes an After Effects
 .jsx that recreates the scene as a comp.  Reverse of
 `aftereffects-to-houdini-usd-exporter`'s `GegenschussAeUsdExporter.jsx`.
-Same TresSims convention, applied in inverse.
+Same AE↔USD coordinate conversion, applied in inverse.
 
 ## Repo orientation
 
@@ -34,7 +34,7 @@ Same TresSims convention, applied in inverse.
 - `test/` -- regression fixtures (camera_probe.jsx + expected USD).
   See test/README.md.
 
-## Coordinate convention (TresSims, inverse)
+## Coordinate convention (inverse)
 
 Forward (AE -> USD), from `aftereffects-to-houdini-usd-exporter`:
 
