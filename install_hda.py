@@ -264,9 +264,15 @@ def install_hda(out_hda_path):
 
 
 if __name__ == "__main__":
+    # Two execution paths:
+    #   1. `hython install_hda.py /path/to/output.hda` -- argv[1] is the target.
+    #   2. `exec(open(...).read())` from Houdini's Python console -- argv has
+    #      whatever Houdini set; we must NOT call sys.exit() here, that
+    #      terminates Houdini (silent crash).  Print a hint instead.
     import sys
-    if len(sys.argv) < 2:
-        print("Usage: hython install_hda.py /path/to/output.hda")
-        sys.exit(1)
-    p = install_hda(sys.argv[1])
-    print("Installed HDA: {}".format(p))
+    if len(sys.argv) >= 2 and sys.argv[1].endswith(".hda"):
+        p = install_hda(sys.argv[1])
+        print("Installed HDA: {}".format(p))
+    else:
+        print("install_hda.py loaded.  Call install_hda('/path/to/output.hda') "
+              "to build the HDA.")
