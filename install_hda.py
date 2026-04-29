@@ -175,8 +175,12 @@ def _build_param_template_group():
         help="Must match the AE-side exporter's Scale; default 100 = 1 m -> 100 px.",
     ))
     g.append(hou.FloatParmTemplate(
-        "duration_override", "Comp duration (s)", 1, default_value=(10.0,), min=0.0,
+        "duration_override", "Comp duration (s)", 1, default_value=(0.0,), min=0.0,
         help="0 = derived from frame range / FPS.",
+    ))
+    g.append(hou.LabelParmTemplate(
+        "duration_info", "",
+        column_labels=("0 = automatic (frame range / FPS)",),
     ))
 
     folder = hou.FolderParmTemplate("frame_range_folder", "Frame range")

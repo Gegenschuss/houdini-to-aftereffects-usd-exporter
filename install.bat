@@ -97,12 +97,10 @@ if exist "%OUT_HDA%" (
     echo.
     echo File already exists:
     echo   %OUT_HDA%
-    set "YN="
-    set /p "YN=Replace? [y/N]: "
-    if /I not "!YN!"=="y" if /I not "!YN!"=="yes" (
-        echo Cancelled.
-        exit /b 0
-    )
+    set "YN=y"
+    set /p "YN=Replace? [Y/n]: "
+    if /I "!YN!"=="n" (echo Cancelled. & exit /b 0)
+    if /I "!YN!"=="no" (echo Cancelled. & exit /b 0)
 )
 
 REM 1. HYTHON env var wins.

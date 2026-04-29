@@ -157,11 +157,13 @@ class PrimNode:
         "prim", "kind", "ae_var", "ae_name", "doc",
         "parent", "children",
         "pos_samples", "rot_samples", "scale_samples",
+        "poi_samples",
         "focal_samples", "focus_samples",
         "intensity_samples", "color_samples",
         "cone_angle_samples", "cone_feather_samples",
         "vis_in_frame", "vis_out_frame",
         "solid_color", "solid_w", "solid_h",
+        "solid_anchor_x", "solid_anchor_y",
         "footage_path",
     )
 
@@ -173,6 +175,7 @@ class PrimNode:
         self.pos_samples = []        # [(frame, [x, y, z]), ...]
         self.rot_samples = []        # [(frame, [xr, yr, zr]), ...]
         self.scale_samples = []      # [(frame, [sx, sy, sz]), ...]
+        self.poi_samples = []        # [(frame, [x, y, z]), ...] for 2-node lights
         self.focal_samples = []      # [(frame, zoom_px)]  (camera only)
         self.focus_samples = []
         self.intensity_samples = []  # [(frame, percent)]
@@ -184,6 +187,11 @@ class PrimNode:
         self.solid_color = None
         self.solid_w = None
         self.solid_h = None
+        # Anchor point in AE-pixel layer-local coords.  Defaults to
+        # mesh centre (w/2, h/2) when the USD mesh is centred at origin;
+        # offset for shape / text layers whose mesh sits away from anchor.
+        self.solid_anchor_x = None
+        self.solid_anchor_y = None
         self.footage_path = None
         self.doc = ""
         # Filled in by `assign_names`.
@@ -224,10 +232,15 @@ def _classify(prim):
 
 def _inspect_geo(prim):
     """If `prim` has a child Mesh "geo", classify it as Solid or Footage and
-    extract the data AE needs (color or texture path, plus pixel size).
+    extract the data AE needs (color or texture path, pixel size, and the
+    mesh-vs-anchor offset for shape/text layers).
 
-    Returns (kind, color_or_None, footage_path_or_None, width_px, height_px)
-    or None if the prim has no geo.
+    Returns
+        (kind, color, footage_path, width_units, height_units, min_x, max_y)
+    where min_x / max_y are the mesh's USD-space extents (caller flips
+    Y to AE coords) -- used to derive the AE anchor point so the round-
+    tripped mesh lands at the same layer-local position as the original.
+    Returns None if the prim has no geo.
     """
     mesh_prim = prim.GetChild("geo")
     if not mesh_prim or mesh_prim.GetTypeName() != "Mesh":
@@ -243,8 +256,10 @@ def _inspect_geo(prim):
     # Quad bounds in USD units; convert to AE pixels via caller-provided scale.
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
-    width_units  = max(xs) - min(xs)
-    height_units = max(ys) - min(ys)
+    min_x_usd = min(xs)
+    max_y_usd = max(ys)
+    width_units  = max(xs) - min_x_usd
+    height_units = max_y_usd - min(ys)
 
     # Footage check: material binding to a UsdPreviewSurface chain.
     rel = mesh_prim.GetRelationship("material:binding")
@@ -266,7 +281,7 @@ def _inspect_geo(prim):
                                 break
 
     if footage_path:
-        return ("Footage", None, footage_path, width_units, height_units)
+        return ("Footage", None, footage_path, width_units, height_units, min_x_usd, max_y_usd)
 
     # Solid: read displayColor primvar.
     color = (0.5, 0.5, 0.5)
@@ -275,7 +290,7 @@ def _inspect_geo(prim):
         dc = dc_attr.Get()
         if dc and len(dc) > 0:
             color = (dc[0][0], dc[0][1], dc[0][2])
-    return ("Solid", color, None, width_units, height_units)
+    return ("Solid", color, None, width_units, height_units, min_x_usd, max_y_usd)
 
 
 def _read_visibility(prim, start_frame, end_frame):
@@ -428,18 +443,41 @@ def _sample_prim(node, start_frame, end_frame, scale, comp_width):
                   else [int(start_frame)])
 
     # Transform: decompose the local matrix per frame.
+    # Distance to project the Point of Interest in front of 2-node lights.
+    # Arbitrary -- POI just defines the look direction; magnitude doesn't
+    # affect orientation.  1000 px sits well outside typical comp space
+    # so the POI doesn't accidentally end up inside scene geometry.
+    POI_DISTANCE = 1000.0
+
     for f in frame_iter:
         m4 = _read_xform_matrix(prim, f, None)
         if m4 is None:
             continue
         tx, ty, tz, R_ae, sx, sy, sz = decompose_usd_mat4(m4)
-        node.pos_samples.append((f, usd_pos_to_ae(tx, ty, tz, scale)))
+        ae_pos = usd_pos_to_ae(tx, ty, tz, scale)
+        node.pos_samples.append((f, ae_pos))
         xr, yr, zr = euler_zyx_from_matrix(R_ae)
         node.rot_samples.append((f, [xr, yr, zr]))
         # Only AVLayers have a meaningful scale -- nulls/cameras/lights
         # ignore it on the AE side.  We still record it; the writer
         # decides whether to emit.
         node.scale_samples.append((f, [sx * 100.0, sy * 100.0, sz * 100.0]))
+
+        # POI-driven 2-node setup is reserved for Parallel/Spot lights:
+        # AE hides their rotation channels, so POI is the only path.  We
+        # do NOT use POI for cameras -- 2-node POI loses any roll around
+        # the look axis (small but visible drift on animated 2-node
+        # orbit cameras), so cameras stay 1-node with explicit Euler
+        # rotation, which is matrix-exact regardless of how the original
+        # was authored.  Local +Z in column-vector form is R_ae's third
+        # column; project that out from the AE-space position to get a
+        # POI that yields the same look direction.
+        if node.kind in ("Parallel", "Spot"):
+            fwd = (R_ae[0][2], R_ae[1][2], R_ae[2][2])
+            poi = [ae_pos[0] + fwd[0] * POI_DISTANCE,
+                   ae_pos[1] + fwd[1] * POI_DISTANCE,
+                   ae_pos[2] + fwd[2] * POI_DISTANCE]
+            node.poi_samples.append((f, poi))
 
     # Camera: zoom (px) from focalLength (USD).
     if node.kind == "Camera":
@@ -474,12 +512,18 @@ def _sample_prim(node, start_frame, end_frame, scale, comp_width):
     if node.kind == "Xform":
         geo = _inspect_geo(prim)
         if geo:
-            kind, color, footage, w_units, h_units = geo
+            kind, color, footage, w_units, h_units, min_x_usd, max_y_usd = geo
             node.kind = kind
             node.solid_color = color
             node.footage_path = footage
             node.solid_w = max(1, int(round(w_units * scale)))
             node.solid_h = max(1, int(round(h_units * scale)))
+            # AE local-pixel L = min_x_usd * scale; T = -max_y_usd * scale.
+            # Anchor = (-L, -T) so the new Solid's mesh (0,0)-(W,H) lines
+            # up with the original mesh extents in layer-local space.
+            # Default-centred meshes get anchor (W/2, H/2) automatically.
+            node.solid_anchor_x = -min_x_usd * scale
+            node.solid_anchor_y =  max_y_usd * scale
         else:
             node.kind = "Null"
 
@@ -620,6 +664,25 @@ def _emit_keyed_scalar(out, expr, samples, fps, value_fmt=_fmt):
             out.append("    {}.setValueAtTime({}, {});".format(expr, _fmt(t), value_fmt(v)))
 
 
+def _emit_anchor_point(out, n):
+    """Emit the anchor-point setValue for Solid/Footage layers.
+
+    Skipped when the anchor matches AE's default (mesh centre); only
+    written when shape/text layers had their geometry offset from the
+    layer's anchor in the original AE comp -- preserves that offset on
+    re-import so rotation pivots and round-tripped mesh extents match.
+    """
+    if n.solid_anchor_x is None or n.solid_anchor_y is None:
+        return
+    w = n.solid_w or 0
+    h = n.solid_h or 0
+    # Default anchor is mesh centre; skip emission when that's what we'd write.
+    if abs(n.solid_anchor_x - w / 2.0) < 0.5 and abs(n.solid_anchor_y - h / 2.0) < 0.5:
+        return
+    out.append("    {}.transform.anchorPoint.setValue([{}, {}, 0]);".format(
+        n.ae_var, _fmt(n.solid_anchor_x), _fmt(n.solid_anchor_y)))
+
+
 def _emit_layer_creation(out, n, comp_var):
     """Emit the JSX line that creates the AE layer for this PrimNode.
 
@@ -631,9 +694,13 @@ def _emit_layer_creation(out, n, comp_var):
     if n.kind == "Camera":
         out.append('    var {} = {}.layers.addCamera("{}", [{}.width/2, {}.height/2]);'.format(
             n.ae_var, comp_var, name, comp_var, comp_var))
-        # Default-created cameras may auto-orient toward Point of Interest,
-        # which hides the rotation channels.  Force 1-node so we can set
-        # xRotation/yRotation/zRotation directly.
+        # 1-node camera (NO_AUTO_ORIENT) so we can set xRotation /
+        # yRotation / zRotation directly.  This is matrix-exact: the
+        # ZYX Euler decomposition feeds AE's aeRotMatrix(0,0,0, xr, yr,
+        # zr) = Rz*Ry*Rx, which reconstructs the original rotation
+        # without going through AE's internal POI-based lookAt (which
+        # would silently drop any roll around the look axis -- visible
+        # on animated 2-node orbit cameras).
         out.append('    {}.autoOrient = AutoOrientType.NO_AUTO_ORIENT;'.format(n.ae_var))
         return
 
@@ -647,12 +714,10 @@ def _emit_layer_creation(out, n, comp_var):
             "Spot":     "LightType.SPOT",
         }
         out.append('    {}.lightType = {};'.format(n.ae_var, light_type_map[n.kind]))
-        # Parallel and Spot default to 2-node (auto-orient toward POI),
-        # which hides rotation channels.  Switch to NO_AUTO_ORIENT so we
-        # can set explicit rotation from the USD matrix.  Ambient and
-        # Point have no rotation anyway -- skip.
-        if n.kind in ("Parallel", "Spot"):
-            out.append('    {}.autoOrient = AutoOrientType.NO_AUTO_ORIENT;'.format(n.ae_var))
+        # Parallel and Spot stay 2-node (auto-orient toward POI) -- AE
+        # keeps their rotation channels hidden regardless of autoOrient
+        # mode, so we set Point of Interest instead.  Ambient and Point
+        # have no orientation in AE.
         return
 
     if n.kind == "Solid":
@@ -662,6 +727,7 @@ def _emit_layer_creation(out, n, comp_var):
         out.append('    var {} = {}.layers.addSolid([{}, {}, {}], "{}", {}, {}, 1.0);'.format(
             n.ae_var, comp_var, _fmt(c[0]), _fmt(c[1]), _fmt(c[2]), name, w, h))
         out.append('    {}.threeDLayer = true;'.format(n.ae_var))
+        _emit_anchor_point(out, n)
         return
 
     if n.kind == "Footage":
@@ -671,6 +737,7 @@ def _emit_layer_creation(out, n, comp_var):
         out.append('    var {} = {}.layers.add(item_{});'.format(n.ae_var, comp_var, n.ae_var))
         out.append('    {}.name = "{}";'.format(n.ae_var, name))
         out.append('    {}.threeDLayer = true;'.format(n.ae_var))
+        _emit_anchor_point(out, n)
         return
 
     # Default: Null.
@@ -682,22 +749,31 @@ def _emit_layer_creation(out, n, comp_var):
 def _emit_layer_animation(out, n, fps):
     """Emit transform + per-type property keyframes for a created layer.
 
-    AE hides certain transform channels per light type; setValue on a
-    hidden property errors out ("the property or a parent property is
+    AE hides certain transform channels per layer type; setValue on a
+    hidden property errors ("the property or a parent property is
     hidden").  Suppress what AE doesn't expose:
-      - Ambient: no position, no rotation (omnipresent).
-      - Point:   no rotation (omnidirectional).
-      - Parallel/Spot: full position + rotation.
-      - Camera/AVLayers: full position + rotation; AVLayers also scale.
+      - Ambient: no position, no rotation, no POI (omnipresent).
+      - Point:   position only (omnidirectional, no rotation in AE).
+      - Parallel/Spot: position + pointOfInterest (AE hides the
+                       rotation channels on 2-node lights, so POI is
+                       the only way; loses roll around the look axis).
+      - Camera:  position + Euler rotation (1-node, NO_AUTO_ORIENT).
+                 Matrix-exact round-trip; preserves any roll the
+                 original camera had.
+      - AVLayer: position + rotation + scale.
     """
     var = n.ae_var
 
     has_position = n.kind != "Ambient"
-    has_rotation = n.kind not in ("Ambient", "Point")
+    use_poi      = n.kind in ("Parallel", "Spot")
+    has_rotation = n.kind in ("Camera", "Solid", "Footage", "Null")
     has_scale    = n.kind in ("Solid", "Footage", "Null")
 
     if has_position and n.pos_samples:
         _emit_keyed_scalar(out, "{}.transform.position".format(var), n.pos_samples, fps)
+
+    if use_poi and n.poi_samples:
+        _emit_keyed_scalar(out, "{}.transform.pointOfInterest".format(var), n.poi_samples, fps)
 
     if has_rotation and n.rot_samples:
         xr = [(f, v[0]) for f, v in n.rot_samples]
@@ -789,8 +865,12 @@ def _build_jsx(stage, nodes, roots, comp_name, comp_w, comp_h, fps,
     _emit_comp(out, comp_var, comp_name, comp_w, comp_h, fps, duration_s, par)
     out.append("")
 
-    # Pass 1: create every layer.
-    for n in nodes:
+    # Pass 1: create every layer.  Iterate in REVERSE so AE's
+    # addNull/addSolid/addLight/addCamera (which inserts each new layer
+    # at index 1, the top of the comp) ends up with the FIRST prim in
+    # the USD on top -- matches AE's natural top-to-bottom layer order
+    # and the order the forward exporter walks `comp.layers`.
+    for n in reversed(nodes):
         _emit_layer_creation(out, n, comp_var)
 
     out.append("")

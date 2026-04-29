@@ -111,17 +111,19 @@ install_hda("/path/to/repo/otls/gegenschuss_ae_export.hda")
 
 ## What's verified vs not
 
-End-to-end against synthetic USD stages:
+End-to-end against synthetic USD stages and a real AE round-trip
+(`AE → forward USD → reverse JSX → AE → forward USD` compared
+matrix-by-matrix):
 - ✅ Coordinate inversion (identity USD → identity AE)
-- ✅ Translation, scale, hierarchy
+- ✅ Translation, scale, hierarchy, layer order
 - ✅ Static + animated transforms (timeSamples → AE keyframes)
+- ✅ Camera world matrix round-trip (matrix-exact, including roll)
 - ✅ Camera focal length conversion (USD → AE zoom)
 - ✅ Static-value optimisation (single `setValue` instead of per-frame keys)
 - ✅ AE_Scene wrapper unwrap
+- ✅ Solid / Footage / shape / text mesh-vs-anchor placement
 
 Not yet visually verified end-to-end:
-- ⚠️ Round-trip identity (export from AE → import into Houdini → export
-  back to AE → compare).  Pending real AE-side test.
 - ⚠️ All four light types in AE preview.  Data is converted; intensity
   scaling matches the forward direction's per-type factor.
 - ⚠️ Footage import — absolute paths from the Houdini side; AE relinking
@@ -131,17 +133,30 @@ Not yet visually verified end-to-end:
 
 ## Known limitations
 
-- **1-node cameras only** — 2-node POI cameras are flattened to keyed
-  rotation.  The world-space matrix is preserved but the camera no
-  longer aims at a point of interest.
+- **Cameras land as 1-node** — every camera comes back as a 1-node
+  (NO_AUTO_ORIENT) AE camera with explicit `xRotation` / `yRotation` /
+  `zRotation` from the USD matrix.  This is what gives matrix-exact
+  round-trip including roll, but it does mean the camera no longer
+  carries a Point of Interest after import; if you need POI handles,
+  flip `autoOrient` back to 2-node manually in AE.
 - **Orientation = (0, 0, 0)** — all rotation goes into individual X/Y/Z
-  Rotation channels (ZYX order).  If the original AE used keyed
-  Orientation, the matrix is still right but the channel split differs.
-- **Anchor points** — non-default AVLayer anchor points are not yet
-  reconstructed; rotation/scale pivots default to layer centre.
-- **Text and shape layers** — exported as Solid layers (the forward
-  exporter writes them as Mesh quads with displayColor; we can't tell
-  them apart from solids on import).
+  Rotation channels (ZYX order).  If the original AE comp used keyed
+  Orientation, the world matrix is still exact but the channel split
+  differs from what was originally typed in.
+- **Parallel / Spot lights lose roll** — AE hides the rotation channels
+  on 2-node lights and blocks `setValue` even via scripting, so we set
+  Point of Interest instead.  POI captures the look direction perfectly
+  but drops any rotation around the local +Z axis.  Position, look
+  direction, intensity, color, and (for Spot) cone angle / softness
+  round-trip cleanly; only the camera-style "twist" around the look
+  axis is lost on Parallel and Spot.
+- **Ambient / Point lights** — Ambient has no transform in AE; Point
+  has only Position.  Both round-trip those values cleanly.
+- **Text and shape layers** — re-imported as Solid layers (the forward
+  exporter writes them as Mesh quads with `displayColor`; we can't
+  distinguish them from real solids on import).  Mesh placement
+  (`anchorPoint` derived from the original mesh extents) round-trips
+  cleanly; the actual glyph / vector outlines are lost.
 - **Mesh geometry** — only quad-`geo` meshes are recognised as
   AVLayers.  Arbitrary USD meshes are skipped.
 - **Footage paths** — absolute, relative to the Houdini host filesystem.

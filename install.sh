@@ -98,10 +98,10 @@ if [[ -f "$OUT_HDA" ]]; then
     echo
     echo "File already exists:"
     echo "  $OUT_HDA"
-    read -r -p "Replace? [y/N]: " YN
+    read -r -p "Replace? [Y/n]: " YN
     case "$YN" in
-        [Yy]|[Yy][Ee][Ss]) ;;
-        *) echo "Cancelled."; exit 0 ;;
+        [Nn]|[Nn][Oo]) echo "Cancelled."; exit 0 ;;
+        *) ;;
     esac
 fi
 
