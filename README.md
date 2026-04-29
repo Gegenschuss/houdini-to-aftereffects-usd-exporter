@@ -57,20 +57,36 @@ the export range; static channels collapse to a single `setValue`).
 
 ## Install
 
-1. Clone the repo, or download `gegenschuss_solaris_ae_export.py` and
-   `install_hda.py` into a folder on disk.
-2. In Houdini, open the Python Source Editor:
-   ```python
-   exec(open("/path/to/install_hda.py").read())
-   install_hda("/path/to/repo/otls/gegenschuss_ae_export.hda")
-   ```
-   This builds the HDA and installs it in the current session.
-3. To make the HDA load on every Houdini start, add the repo's `otls/`
-   directory to `HOUDINI_OTLSCAN_PATH`, or use
-   `File → Install Asset Library`.
+1. Clone the repo.
+2. Run the installer from a terminal:
 
-The Python module is loaded fresh on every cook, so you can edit
-`gegenschuss_solaris_ae_export.py` without rebuilding the HDA.
+   - **macOS / Linux**: `./install.sh`
+   - **Windows**: `install.bat`
+
+   The installer locates Houdini's `hython`, runs `install_hda.py`, and
+   writes `otls/gegenschuss_ae_export.hda`.  Override `hython` detection
+   by setting `HYTHON` (or `set HYTHON=...` on Windows) before running.
+
+   The installer prompts for the install path (defaults to the repo's
+   `otls/`).  If the .hda already exists, it asks before overwriting.
+
+   **Optional: `install_secrets`** -- copy `install_secrets.example` to
+   `install_secrets` and put your preferred install directory on a single
+   line.  The installer will use it as the default (no need to type the
+   path each time).  `install_secrets` is gitignored.
+
+3. Load the HDA into Houdini however you usually do.
+
+The HDA embeds `gegenschuss_solaris_ae_export.py` as a section, so the
+`.hda` file is fully self-contained — copy it anywhere.  After editing
+the source, re-run the installer to rebuild.
+
+To install from inside Houdini's Python panel instead of the terminal:
+
+```python
+exec(open("/path/to/install_hda.py").read())
+install_hda("/path/to/repo/otls/gegenschuss_ae_export.hda")
+```
 
 ## Usage
 

@@ -34,53 +34,57 @@ HDA_DESCRIPTION  = (
 PYTHON_MODULE_TEMPLATE = '''\
 """HDA backing module -- delegates to gegenschuss_solaris_ae_export.
 
-The core converter lives in a sibling .py file alongside this HDA.  We
-locate it relative to the HDA's library file so edits don't need a
-reinstall.  The path is overridable via the `module_path` parameter on
-the HDA in case the user keeps the module somewhere unusual.
+The core converter source is embedded in this HDA as a section, so the
+HDA is fully self-contained: copy it anywhere, drop into Houdini, and
+it just works.  Pass an explicit path via the `module_path` parameter
+to override with a live disk copy (handy during development).
 """
 
 import os
 import sys
+import types
 import importlib
 
 MODULE_NAME = "gegenschuss_solaris_ae_export"
+MODULE_SECTION = MODULE_NAME + ".py"   # section name inside the HDA
+
+
+def _module_from_string(name, source):
+    """exec source into a fresh ModuleType so callers see real attributes."""
+    mod = types.ModuleType(name)
+    mod.__file__ = "<embedded:%s>" % name
+    exec(compile(source, mod.__file__, "exec"), mod.__dict__)
+    return mod
 
 
 def _resolve_module(node):
+    # 1. Explicit override -- live disk copy.  Used during development so
+    #    edits to the .py don't need an HDA rebuild.
     explicit = node.parm("module_path").evalAsString().strip() if node.parm("module_path") else ""
     if explicit:
-        candidates = [explicit]
-    else:
-        # Try relative to the HDA's library file.
-        candidates = []
-        defn = node.type().definition()
-        if defn:
-            lib = defn.libraryFilePath()
-            if lib:
-                d = os.path.dirname(lib)
-                # otls/ -> ../module.py
-                candidates.append(os.path.join(d, "..", MODULE_NAME + ".py"))
-                candidates.append(os.path.join(d, MODULE_NAME + ".py"))
-        # Also try $HIP and the user's hou.session search path.
-        for d in (hou.expandString("$HIP"), hou.expandString("$HOUDINI_USER_PREF_DIR")):
-            if d:
-                candidates.append(os.path.join(d, MODULE_NAME + ".py"))
+        path = os.path.normpath(explicit)
+        if not os.path.isfile(path):
+            raise RuntimeError("module_path is not a file: " + path)
+        d = os.path.dirname(path)
+        if d not in sys.path:
+            sys.path.insert(0, d)
+        if MODULE_NAME in sys.modules:
+            importlib.reload(sys.modules[MODULE_NAME])
+        return importlib.import_module(MODULE_NAME)
 
-    for path in candidates:
-        path = os.path.normpath(path)
-        if os.path.isfile(path):
-            d = os.path.dirname(path)
-            if d not in sys.path:
-                sys.path.insert(0, d)
-            if MODULE_NAME in sys.modules:
-                # Force reload so the user can edit the module without restarting Houdini.
-                importlib.reload(sys.modules[MODULE_NAME])
-            return importlib.import_module(MODULE_NAME)
+    # 2. Embedded section -- the default path for end users.
+    defn = node.type().definition()
+    if defn is not None:
+        sections = defn.sections()
+        section = sections.get(MODULE_SECTION)
+        if section is not None:
+            return _module_from_string(MODULE_NAME, section.contents())
+
     raise RuntimeError(
-        "Could not find {}.py.  Set the `module_path` parameter on the "
-        "HDA, or place the file alongside the HDA's otls folder.  Tried:\\n  {}"
-        .format(MODULE_NAME, "\\n  ".join(candidates))
+        "{section} section is missing from this HDA, and no module_path "
+        "parameter is set.  Re-run install_hda.py to rebuild the HDA "
+        "with the embedded module."
+        .format(section=MODULE_SECTION)
     )
 
 
@@ -149,8 +153,9 @@ def _build_param_template_group():
     ))
 
     g.append(hou.StringParmTemplate(
-        "comp_name", "Comp name", 1, default_value=("",),
-        help="Override comp name.  Empty = use stage's defaultPrim name, or output filename.",
+        "comp_name", "Comp name", 1, default_value=("$OS",),
+        help="$OS evaluates to this node's name.  Set to empty to fall back "
+             "to the stage's defaultPrim name or the output filename.",
     ))
 
     g.append(hou.IntParmTemplate(
@@ -161,7 +166,7 @@ def _build_param_template_group():
         help="If 0, derived from the first Camera's apertureV/apertureH ratio.",
     ))
     g.append(hou.FloatParmTemplate(
-        "fps", "FPS", 1, default_value=(0.0,), min=0.0, max=240.0,
+        "fps", "FPS", 1, default_value=(25.0,), min=0.0, max=240.0,
         help="0 = read from stage metadata.",
     ))
     g.append(hou.FloatParmTemplate(
@@ -170,7 +175,7 @@ def _build_param_template_group():
         help="Must match the AE-side exporter's Scale; default 100 = 1 m -> 100 px.",
     ))
     g.append(hou.FloatParmTemplate(
-        "duration_override", "Comp duration (s)", 1, default_value=(0.0,), min=0.0,
+        "duration_override", "Comp duration (s)", 1, default_value=(10.0,), min=0.0,
         help="0 = derived from frame range / FPS.",
     ))
 
@@ -191,13 +196,6 @@ def _build_param_template_group():
              "round-trips identity.",
     ))
 
-    g.append(hou.StringParmTemplate(
-        "module_path", "Python module path", 1, default_value=("",),
-        string_type=hou.stringParmType.FileReference,
-        help="Override path to gegenschuss_solaris_ae_export.py.  "
-             "Empty = look alongside the HDA's library file.",
-    ))
-
     g.append(hou.SeparatorParmTemplate("sep1"))
     g.append(hou.ButtonParmTemplate(
         "execute", "Save JSX",
@@ -209,14 +207,30 @@ def _build_param_template_group():
     return g
 
 
-def install_hda(out_hda_path):
-    """Create the HDA file at `out_hda_path` and load it in this Houdini session."""
+def install_hda(out_hda_path, icon_path=None):
+    """Create the HDA file at `out_hda_path` and load it in this Houdini session.
+
+    If `icon_path` is None, looks for `Gegenschuss.png` next to this
+    script (or in the current working directory when run via exec) and
+    embeds it as the HDA icon.  Pass an explicit path to override, or
+    `False` to skip icon embedding entirely.
+    """
     import hou
 
     out_hda_path = os.path.abspath(out_hda_path)
     out_dir = os.path.dirname(out_hda_path)
     if out_dir and not os.path.isdir(out_dir):
         os.makedirs(out_dir)
+
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        here = os.getcwd()
+
+    if icon_path is None:
+        candidate = os.path.join(here, "Gegenschuss.png")
+        if os.path.isfile(candidate):
+            icon_path = candidate
 
     # Use a throwaway Python LOP as the seed -- gives us a working LOP node we
     # can promote to an HDA via createDigitalAsset.  Created in /stage and
@@ -243,6 +257,23 @@ def install_hda(out_hda_path):
         defn.setParmTemplateGroup(_build_param_template_group())
         defn.addSection("PythonModule", PYTHON_MODULE_TEMPLATE)
         defn.setExtraInfo(HDA_DESCRIPTION)
+        # Embed the core Python module so the HDA is self-contained.  No
+        # external file dependency at runtime; copy the .hda anywhere.
+        module_py = os.path.join(here, "gegenschuss_solaris_ae_export.py")
+        if os.path.isfile(module_py):
+            with open(module_py, "r", encoding="utf-8") as f:
+                defn.addSection("gegenschuss_solaris_ae_export.py", f.read())
+        # Embed the Gegenschuss logo as the HDA icon (shown in network
+        # editor + tab menu).  Houdini looks up the icon section by its
+        # filename (e.g. "icon.png" / "icon.svg"), not by an arbitrary
+        # name -- a section named "Icon" is silently ignored and falls
+        # back to the warning-triangle placeholder.
+        if icon_path and os.path.isfile(icon_path):
+            ext = os.path.splitext(icon_path)[1].lower()  # ".png" / ".svg"
+            section_name = "icon" + ext
+            with open(icon_path, "rb") as f:
+                defn.addSection(section_name, f.read())
+            defn.setIcon("opdef:.?" + section_name)
         # Make the PythonModule accessible via hou.phm() inside callbacks.
         opts = defn.options()
         opts.setSaveCachedCode(False)

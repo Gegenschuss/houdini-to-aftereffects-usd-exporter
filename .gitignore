@@ -16,3 +16,7 @@ test2/
 __pycache__/
 *.pyc
 backup/
+otls/backup/
+
+# Local install path override -- per-machine, never published.
+install_secrets

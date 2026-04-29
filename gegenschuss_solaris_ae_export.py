@@ -631,6 +631,10 @@ def _emit_layer_creation(out, n, comp_var):
     if n.kind == "Camera":
         out.append('    var {} = {}.layers.addCamera("{}", [{}.width/2, {}.height/2]);'.format(
             n.ae_var, comp_var, name, comp_var, comp_var))
+        # Default-created cameras may auto-orient toward Point of Interest,
+        # which hides the rotation channels.  Force 1-node so we can set
+        # xRotation/yRotation/zRotation directly.
+        out.append('    {}.autoOrient = AutoOrientType.NO_AUTO_ORIENT;'.format(n.ae_var))
         return
 
     if n.kind in ("Ambient", "Parallel", "Point", "Spot"):
@@ -643,6 +647,12 @@ def _emit_layer_creation(out, n, comp_var):
             "Spot":     "LightType.SPOT",
         }
         out.append('    {}.lightType = {};'.format(n.ae_var, light_type_map[n.kind]))
+        # Parallel and Spot default to 2-node (auto-orient toward POI),
+        # which hides rotation channels.  Switch to NO_AUTO_ORIENT so we
+        # can set explicit rotation from the USD matrix.  Ambient and
+        # Point have no rotation anyway -- skip.
+        if n.kind in ("Parallel", "Spot"):
+            out.append('    {}.autoOrient = AutoOrientType.NO_AUTO_ORIENT;'.format(n.ae_var))
         return
 
     if n.kind == "Solid":
@@ -670,15 +680,26 @@ def _emit_layer_creation(out, n, comp_var):
 
 
 def _emit_layer_animation(out, n, fps):
-    """Emit transform + per-type property keyframes for a created layer."""
+    """Emit transform + per-type property keyframes for a created layer.
+
+    AE hides certain transform channels per light type; setValue on a
+    hidden property errors out ("the property or a parent property is
+    hidden").  Suppress what AE doesn't expose:
+      - Ambient: no position, no rotation (omnipresent).
+      - Point:   no rotation (omnidirectional).
+      - Parallel/Spot: full position + rotation.
+      - Camera/AVLayers: full position + rotation; AVLayers also scale.
+    """
     var = n.ae_var
 
-    # Position
-    if n.pos_samples:
+    has_position = n.kind != "Ambient"
+    has_rotation = n.kind not in ("Ambient", "Point")
+    has_scale    = n.kind in ("Solid", "Footage", "Null")
+
+    if has_position and n.pos_samples:
         _emit_keyed_scalar(out, "{}.transform.position".format(var), n.pos_samples, fps)
 
-    # Rotation: split into X/Y/Z rotation channels.  Orientation is left at 0.
-    if n.rot_samples:
+    if has_rotation and n.rot_samples:
         xr = [(f, v[0]) for f, v in n.rot_samples]
         yr = [(f, v[1]) for f, v in n.rot_samples]
         zr = [(f, v[2]) for f, v in n.rot_samples]
@@ -686,8 +707,7 @@ def _emit_layer_animation(out, n, fps):
         _emit_keyed_scalar(out, "{}.transform.yRotation".format(var), yr, fps)
         _emit_keyed_scalar(out, "{}.transform.zRotation".format(var), zr, fps)
 
-    # Scale: only AVLayers (Solid/Footage/Null).  Cameras and lights ignore.
-    if n.kind in ("Solid", "Footage", "Null") and n.scale_samples:
+    if has_scale and n.scale_samples:
         _emit_keyed_scalar(out, "{}.transform.scale".format(var), n.scale_samples, fps)
 
     # Camera-specific
